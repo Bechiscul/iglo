@@ -1,6 +1,6 @@
 # Iglo
 
-Iglo is a highly performant game engine framework written in pure [Rust](https://rustlang.org). The implementation is written up as a [blog](https://iglo.dev/blog) series.
+Iglo is a highly performant game engine framework written in pure [Rust](https://rustlang.org).
 
 - [Getting Started](https://iglo.dev/blog/getting-started)
 
@@ -13,6 +13,14 @@ Iglo is a highly performant game engine framework written in pure [Rust](https:/
 ### Renderer Hardware Interface
 
 Low-level API-agnostic interface, which goal is to provide as close to zero-cost abstractions over [DirectX 12]() and [Vulkan]() as possible.
+
+#### Backends
+
+| Platform | D3D12 | Vulkan | Metal |
+| -------- | ----- | ------ | ----- |
+| Windows  | :x:   | WIP    | -     |
+| Linux    | -     | :x:    | -     |
+| MacOs    | -     | -      | :x:   |
 
 ## References
 
