@@ -1,10 +1,10 @@
+// TODO(Bech): Only enable if vulkan.
 mod vk;
 
-mod instance;
-pub use instance::{Backend, Instance, InstanceApi, InstanceError};
+pub use adapter::*;
+pub use instance::*;
+pub use surface::*;
 
 mod adapter;
-pub use adapter::{Adapter, AdapterApi};
-
-// mod device;
-// pub use device::{Device, DeviceApi, DeviceError};
+mod instance;
+mod surface;

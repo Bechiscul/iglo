@@ -1,168 +1,204 @@
-use crate::rhi;
+use std::ffi::{CStr, CString};
+
 use ash::{
-    self,
-    vk::{self, ExtensionProperties, InstanceCreateInfo, LayerProperties},
-    Entry,
+    extensions::*,
+    vk::{self, ApplicationInfo},
 };
-use std::{ffi::CString, fmt::Debug};
+
+use crate::rhi::{
+    Adapter, Backend, InstanceApi, InstanceError, InstanceInfo, Surface, SurfaceError,
+};
+
+pub trait VkInstanceApi {
+    /// Returns the entry that holds the global vulkan functions.
+    fn entry(&self) -> &ash::Entry;
+
+    /// Returns a handle to the vulkan instance.
+    ///
+    /// # Safety
+    ///
+    /// The handles lifetime is tied to the instance object
+    /// and must not be used after the object has been dropped.
+    unsafe fn handle(&self) -> &ash::Instance;
+
+    /// Returns a handle to a vulkan debug utils messenger.
+    ///
+    /// # Safety
+    ///
+    /// The messengers lifetime is tied to the lifetime of the instance object
+    /// and must not be used after this object has been dropped.
+    unsafe fn debug_utils_messenger(&self) -> Option<&vk::DebugUtilsMessengerEXT>;
+
+    /// Returns a handle to the loaded vulkan VkDebugUtils extension.
+    ///
+    /// # Safety
+    ///
+    /// The extensions lifetime is tied to the lifetime of the instance object
+    /// and must not be used after this object has been dropped.
+    unsafe fn debug_utils_extension(&self) -> Option<&ext::DebugUtils>;
+}
 
 pub struct VkInstance {
     entry: ash::Entry,
-    instance: ash::Instance,
-    debug: bool,
-    validation: bool,
-}
-
-impl Debug for VkInstance {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!(
-            "VkInstance {{ entry: _, instance: _, debug: {:?}, validation: {:?} }}",
-            self.debug, self.validation
-        ))
-    }
+    handle: ash::Instance,
+    physical_devices: Vec<vk::PhysicalDevice>,
+    debug_utils: Option<(vk::DebugUtilsMessengerEXT, ext::DebugUtils)>,
 }
 
 impl VkInstance {
-    const EXTENSIONS: [&'static str; 2] = ["VK_KHR_surface", "VK_KHR_win32_surface"];
-    const LAYERS: [&'static str; 0] = [];
+    // Warning(Bech): The layer- and extension names must all be null-terminated. This is done to make conversion to &CStr trivial.
+    const ENABLED_LAYER_NAMES: [&'static str; 0] = [];
+    const ENABLED_EXTENSION_NAMES: [&'static str; 2] =
+        ["VK_KHR_surface\0", "VK_KHR_win32_surface\0"];
 
-    pub fn new(debug: bool, validation: bool) -> Result<Self, rhi::InstanceError> {
-        let entry = match unsafe { Entry::new() } {
+    pub fn new(info: &InstanceInfo) -> Result<Self, InstanceError> {
+        // SAFETY: Since we are loading vulkan dynamically, we assume that it is implemented correctly.
+        // There is really nothing we can do if it isn't.
+        let entry = match unsafe { ash::Entry::load() } {
             Ok(entry) => entry,
-            _ => return Err(rhi::InstanceError {}),
+            _ => return Err(InstanceError::NotSupported),
         };
 
-        let all_extensions = entry.enumerate_instance_extension_properties().unwrap();
-        let all_layers = entry.enumerate_instance_layer_properties().unwrap();
+        let application_name;
+        let application_info;
 
-        let extension_names = Self::EXTENSIONS.as_slice();
-        if !Self::has_extensions(extension_names, &all_extensions) {
-            return Err(rhi::InstanceError {});
-        }
+        let create_info = match info.app_info {
+            Some(app_info) => {
+                application_name = CString::new(app_info.name.to_owned()).unwrap();
 
-        let layer_names = Self::LAYERS.as_slice();
-        if !Self::has_layers(layer_names, &all_layers) {
-            return Err(rhi::InstanceError {});
-        }
+                let version = vk::make_api_version(
+                    0,
+                    app_info.version.major.into(),
+                    app_info.version.minor.into(),
+                    app_info.version.patch.into(),
+                );
 
-        let mut extensions =
-            unsafe { Self::find_extensions(extension_names, &all_extensions).unwrap_unchecked() };
-        if debug && Self::has_extension("VK_KHR_debug_utils", &all_extensions) {
-            let extension = Self::find_extension("VK_KHR_debug_utils", &all_extensions);
-            unsafe { extensions.push(extension.unwrap_unchecked()) };
-        }
+                application_info = vk::ApplicationInfo::builder()
+                    .application_version(version)
+                    .application_name(application_name.as_c_str());
 
-        let mut layers = unsafe { Self::find_layers(layer_names, &all_layers).unwrap() };
-        if validation && Self::has_layer("VK_LAYER_KHRONOS_validation", &all_layers) {
-            let layer = Self::find_layer("VK_LAYER_KHRONOS_validation", &all_layers);
-            unsafe { layers.push(layer.unwrap_unchecked()) };
-        }
-
-        let extensions: Vec<*const i8> = extensions
-            .iter()
-            .map(|extension| extension.extension_name.as_ptr())
-            .collect();
-
-        let layers: Vec<*const i8> = layers
-            .iter()
-            .map(|layer| layer.layer_name.as_ptr())
-            .collect();
-
-        let create_info = InstanceCreateInfo {
-            enabled_extension_count: extensions.len() as u32,
-            pp_enabled_extension_names: extensions.as_ptr(),
-            enabled_layer_count: layers.len() as u32,
-            pp_enabled_layer_names: layers.as_ptr(),
-            ..Default::default()
+                vk::InstanceCreateInfo::builder().application_info(&application_info)
+            }
+            _ => vk::InstanceCreateInfo::builder(),
         };
 
+        // SAFETY: This is safe because all strings in Self::ENABLED_LAYER_NAMES are null-terminated.
+        let mut enabled_layer_names: Vec<*const i8> = unsafe {
+            Self::ENABLED_LAYER_NAMES
+                .iter()
+                .map(|s| CStr::from_bytes_with_nul_unchecked(s.as_bytes()).as_ptr())
+                .collect()
+        };
+
+        const VALIDATION_LAYER_NAME: &str = "VK_LAYER_KHRONOS_validation\0";
+        if info.validation && Self::has_layer(VALIDATION_LAYER_NAME, &entry)? {
+            // SAFETY: This is safe because VALIDATION_LAYER_NAME is null-terminated and doesn't contain any interior null bytes.
+            enabled_layer_names.push(unsafe {
+                CStr::from_bytes_with_nul_unchecked(VALIDATION_LAYER_NAME.as_bytes()).as_ptr()
+            });
+        }
+
+        // SAFETY: This is safe because all strings in Self::ENABLED_EXTENSION_NAMES are null-terminated.
+        let mut enabled_extension_names: Vec<*const i8> = unsafe {
+            Self::ENABLED_EXTENSION_NAMES
+                .iter()
+                .map(|s| CStr::from_bytes_with_nul_unchecked(s.as_bytes()).as_ptr())
+                .collect()
+        };
+
+        const DEBUG_EXTENSION_NAME: &str = "VK_EXT_debug_utils\0";
+        if info.debug && Self::has_extension(DEBUG_EXTENSION_NAME, &entry)? {
+            // SAFETY: This is safe because DEBUG_EXTENSION_NAME is null-terminated.
+            enabled_extension_names.push(unsafe {
+                CStr::from_bytes_with_nul_unchecked(DEBUG_EXTENSION_NAME.as_bytes()).as_ptr()
+            });
+        }
+
+        let create_info = create_info
+            .enabled_layer_names(&enabled_layer_names)
+            .enabled_extension_names(&enabled_extension_names);
+
+        // SAFETY: We assume the vulkan implementation is implemented correctly.
         match unsafe { entry.create_instance(&create_info, None) } {
             Ok(instance) => Ok(Self {
                 entry,
-                instance,
-                debug,
-                validation,
+                handle: instance,
+                physical_devices: vec![],
+                debug_utils: None,
             }),
-            _ => Err(rhi::InstanceError {}),
+            _ => Err(InstanceError::Unknown),
         }
     }
 
-    fn find_extension<'a>(
-        name: &str,
-        extensions: &'a Vec<ExtensionProperties>,
-    ) -> Option<&'a ExtensionProperties> {
-        extensions.iter().find(|v| {
-            // Safe since Vulkan guarantees VkExtensionProperties::extensionName is a null-terminated UTF8-string.
-            let extension_name = unsafe { std::ffi::CStr::from_ptr(v.extension_name.as_ptr()) };
-            extension_name.to_bytes() == name.as_bytes()
-        })
-    }
-
-    fn has_extension<'a>(name: &str, extensions: &'a Vec<ExtensionProperties>) -> bool {
-        Self::find_extension(name, extensions).is_some()
-    }
-
-    fn find_extensions<'a>(
-        names: &[&str],
-        extensions: &'a Vec<ExtensionProperties>,
-    ) -> Option<Vec<&'a ExtensionProperties>> {
-        let mut found_extensions = Vec::with_capacity(names.len());
-        for &name in names {
-            match Self::find_extension(name, extensions) {
-                Some(extension) => found_extensions.push(extension),
-                _ => {
-                    return None;
-                }
-            }
+    fn has_layer(name: &str, entry: &ash::Entry) -> Result<bool, InstanceError> {
+        let name = CStr::from_bytes_with_nul(name.as_bytes()).unwrap();
+        let layer_properties = entry.enumerate_instance_layer_properties();
+        match layer_properties {
+            Ok(layer_properties) => Ok(layer_properties
+                .iter()
+                .find(|ep| {
+                    // SAFETY: This is safe because the vulkan specification states that VkLayerProperties::layerName is a null-terminated UTF-8 string.
+                    let layer_name = unsafe { CStr::from_ptr(ep.layer_name.as_ptr()) };
+                    layer_name == name
+                })
+                .is_some()),
+            // TODO(Bech): Proper error handling.
+            _ => Err(InstanceError::Unknown),
         }
-
-        Some(found_extensions)
     }
 
-    fn has_extensions(names: &[&str], extensions: &Vec<ExtensionProperties>) -> bool {
-        Self::find_extensions(names, extensions).is_some()
-    }
-
-    fn find_layer<'a>(name: &str, layers: &'a Vec<LayerProperties>) -> Option<&'a LayerProperties> {
-        layers.iter().find(|v| {
-            // Safe since Vulkan guarantees VkLayerProperties::layerName is a null-terminated UTF8-string.
-            let layer_name = unsafe { std::ffi::CStr::from_ptr(v.layer_name.as_ptr()) };
-            layer_name.to_bytes() == name.as_bytes()
-        })
-    }
-
-    fn has_layer(name: &str, layers: &Vec<LayerProperties>) -> bool {
-        Self::find_layer(name, layers).is_some()
-    }
-
-    fn find_layers<'a>(
-        names: &[&str],
-        layers: &'a Vec<LayerProperties>,
-    ) -> Option<Vec<&'a LayerProperties>> {
-        let mut found_layers = Vec::with_capacity(names.len());
-        for &name in names {
-            match Self::find_layer(name, layers) {
-                Some(layer) => found_layers.push(layer),
-                _ => {
-                    return None;
-                }
-            }
+    fn has_extension(name: &str, entry: &ash::Entry) -> Result<bool, InstanceError> {
+        let name = CStr::from_bytes_with_nul(name.as_bytes()).unwrap();
+        let extension_properties = entry.enumerate_instance_extension_properties();
+        match extension_properties {
+            Ok(extension_properties) => Ok(extension_properties
+                .iter()
+                .find(|ep| {
+                    // SAFETY: This is safe because the vulkan specification states that VkExtensionProperties::extensionName is a null-terminated UTF-8 string.
+                    let extension_name = unsafe { CStr::from_ptr(ep.extension_name.as_ptr()) };
+                    extension_name == name
+                })
+                .is_some()),
+            // TODO(Bech): Proper error handling.
+            _ => Err(InstanceError::Unknown),
         }
-
-        Some(found_layers)
-    }
-
-    fn has_layers(names: &[&str], layers: &Vec<LayerProperties>) -> bool {
-        Self::find_layers(names, layers).is_some()
     }
 }
 
-unsafe impl rhi::InstanceApi for VkInstance {
-    fn backend(&self) -> rhi::Backend {
-        rhi::Backend::Vulkan
+impl VkInstanceApi for VkInstance {
+    fn entry(&self) -> &ash::Entry {
+        &self.entry
     }
 
-    fn adapters(&self) -> Vec<rhi::Adapter> {
-        Vec::default()
+    unsafe fn handle(&self) -> &ash::Instance {
+        &self.handle
+    }
+
+    unsafe fn debug_utils_messenger(&self) -> Option<&vk::DebugUtilsMessengerEXT> {
+        match &self.debug_utils {
+            Some(debug_utils) => Some(&debug_utils.0),
+            _ => None,
+        }
+    }
+
+    unsafe fn debug_utils_extension(&self) -> Option<&ext::DebugUtils> {
+        match &self.debug_utils {
+            Some(debug_utils) => Some(&debug_utils.1),
+            _ => None,
+        }
+    }
+}
+
+impl InstanceApi for VkInstance {
+    fn backend(&self) -> Backend {
+        Backend::Vulkan
+    }
+
+    fn new_surface(&self) -> Result<Surface, SurfaceError> {
+        todo!()
+    }
+
+    fn enumerate_adapters<T: ExactSizeIterator<Item = Adapter>>(&self) -> T {
+        todo!()
     }
 }

@@ -1,5 +1,5 @@
-mod instance;
-pub use instance::VkInstance;
+pub use instance::*;
+pub use surface::*;
 
-mod adapter;
-pub use adapter::VkAdapter;
+mod instance;
+mod surface;

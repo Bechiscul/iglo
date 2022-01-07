@@ -1,91 +1,79 @@
-use super::vk;
-use super::Adapter;
+use std::marker::PhantomData;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct InstanceError;
+use enum_dispatch::enum_dispatch;
 
-/// A structure containing all the backends for the current target_os.
+use crate::Version;
+
+use super::{vk::VkInstance, Adapter, Surface, SurfaceError};
+
+#[enum_dispatch]
+pub trait InstanceApi: Send + Sync {
+    /// Returns the currently used backend.
+    fn backend(&self) -> Backend;
+
+    /// Creates a new surface.
+    fn new_surface(&self) -> Result<Surface, SurfaceError>;
+
+    /// Returns all the adapters that supports the minimum required limits.
+    fn enumerate_adapters<T: ExactSizeIterator<Item = Adapter>>(&self) -> T;
+}
+
+/// An object created from an instance.
+#[enum_dispatch]
+pub trait InstanceChild {
+    /// Returns the instance used to create the object.
+    fn instance(&self) -> InstanceRef;
+}
+
+/// Opaque reference to an instance.
+pub enum InstanceRef<'a> {
+    Marker(PhantomData<&'a Instance>),
+}
+
+/// Opaque owned object to an instance.
+#[enum_dispatch(InstanceApi)]
+pub enum Instance {
+    Vk(VkInstance),
+}
+
+impl Instance {
+    pub fn new(info: &InstanceInfo) -> Result<Instance, InstanceError> {
+        Ok(Self::Vk(VkInstance::new(info)?))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     Vulkan,
 }
 
-/// An enum containing all the different variants of an instance.
-#[derive(Debug)]
-pub enum Instance {
-    Vulkan(vk::VkInstance),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstanceError {
+    LayerNotPresent,
+    ExtensionNotPresent,
+    OutOfMemory,
+    NotSupported,
+    Unknown,
 }
 
-impl Instance {
-    /// Tries to create a new instance with the preferred backend for the current platform.
-    ///
-    /// # Remarks
-    /// Enables debugging and validation when not compiled in release.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let instance = Instance::new()?;
-    /// ```
-    pub fn new() -> Result<Self, InstanceError> {
-        Self::with_backend(Backend::Vulkan)
-    }
+/// Information passed to the driver about the application
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplicationInfo<'a> {
+    /// The name of the application.
+    pub name: &'a str,
 
-    /// Creates a new instance with the supplied backend.
-    ///
-    /// # Arguments
-    ///
-    /// * `backend` - Which backend to use.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let instance = Instance::with_backend(Backend::Vulkan)?;
-    /// ```
-    pub fn with_backend(backend: Backend) -> Result<Self, InstanceError> {
-        match backend {
-            Backend::Vulkan => Ok(Instance::Vulkan(vk::VkInstance::new(true, true)?)),
-            _ => Err(InstanceError {}),
-        }
-    }
+    /// The version of the application.
+    pub version: Version,
 }
 
-unsafe impl InstanceApi for Instance {
-    fn backend(&self) -> Backend {
-        match self {
-            Instance::Vulkan(instance) => instance.backend(),
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InstanceInfo<'a> {
+    /// Optional information about the application.
+    pub app_info: Option<ApplicationInfo<'a>>,
 
-    fn adapters(&self) -> Vec<Adapter> {
-        match self {
-            Instance::Vulkan(instance) => instance.adapters(),
-        }
-    }
-}
+    /// Whether to enable validation. This is strongly recommend for debug builds.
+    pub validation: bool,
 
-pub unsafe trait InstanceApi {
-    /// Returns the currently used backend.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let instance = Instance::new()?;
-    /// println!("Backend: {}", instance.backend());
-    /// ```
-    fn backend(&self) -> Backend;
-
-    /// Returns all adapters that supports the current backend and it's required extensions and layers.
-    ///
-    /// # Remarks
-    /// It is guaranteed that the the returned array contains atleast one element, because Instance creation fails if there aren't any valid adapters.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let instance = Instance::new()?;
-    /// let adapter = unsafe { instance.adapters().get_unchecked(0) };
-    /// println!("{}", adapter.description());
-    /// ```
-    fn adapters(&self) -> Vec<Adapter>;
+    /// Whether to enable debugging capabilites. This is recommend for debug builds.
+    pub debug: bool,
 }

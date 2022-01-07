@@ -1,9 +1,11 @@
+//! Iglo is a performance oriented game-engine framework.
+
 use std::fmt::Display;
 
 pub mod os;
 pub mod rhi;
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
     major: u8,
     minor: u8,

@@ -18,13 +18,14 @@ impl IntoPWSTR for String {
 }
 
 pub struct Window {
+    hinstance: HINSTANCE,
     hwnd: HWND,
 }
 
 impl Window {
     pub fn new() -> Result<Self, ()> {
-        let instance = unsafe { GetModuleHandleW(PWSTR::default()) };
-        let class_name = Self::register_class(instance)?;
+        let hinstance = unsafe { GetModuleHandleW(PWSTR::default()) };
+        let class_name = Self::register_class(hinstance)?;
 
         let hwnd = unsafe {
             CreateWindowExW(
@@ -38,7 +39,7 @@ impl Window {
                 480,
                 HWND::default(),
                 HMENU::default(),
-                instance,
+                hinstance,
                 std::ptr::null(),
             )
         };
@@ -47,7 +48,7 @@ impl Window {
             return Err(());
         }
 
-        Ok(Self { hwnd })
+        Ok(Self { hinstance, hwnd })
     }
 
     fn is_class_registered(instance: HINSTANCE, class_name: &str) -> bool {
@@ -97,6 +98,14 @@ impl Window {
         match msg {
             _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
+    }
+
+    pub fn hinstance(&self) -> &HINSTANCE {
+        &self.hinstance
+    }
+
+    pub fn hwnd(&self) -> &HWND {
+        &self.hwnd
     }
 }
 

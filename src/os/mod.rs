@@ -22,6 +22,11 @@ impl Window {
     pub fn poll_events(&self) {
         self.0.poll_events()
     }
+
+    /// Returns access to the underlying platform specific window.
+    pub fn platform_impl(&self) -> &imp::Window {
+        &self.0
+    }
 }
 
 pub trait WindowApi {
