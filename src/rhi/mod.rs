@@ -1,5 +1,5 @@
 // TODO(Bech): Only enable if vulkan.
-mod vk;
+pub mod vk;
 
 pub use adapter::*;
 pub use instance::*;

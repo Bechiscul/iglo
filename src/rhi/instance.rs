@@ -1,8 +1,6 @@
-use std::marker::PhantomData;
-
 use enum_dispatch::enum_dispatch;
 
-use crate::Version;
+use crate::{os::Window, Version};
 
 use super::{vk::VkInstance, Adapter, Surface, SurfaceError};
 
@@ -12,23 +10,24 @@ pub trait InstanceApi: Send + Sync {
     fn backend(&self) -> Backend;
 
     /// Creates a new surface.
-    fn new_surface(&self) -> Result<Surface, SurfaceError>;
+    fn new_surface<'a>(&self, window: &'a Window) -> Result<Surface<'a>, SurfaceError>;
 
     /// Returns all the adapters that supports the minimum required limits.
     fn enumerate_adapters<T: ExactSizeIterator<Item = Adapter>>(&self) -> T;
 }
 
-/// An object created from an instance.
-#[enum_dispatch]
-pub trait InstanceChild {
-    /// Returns the instance used to create the object.
-    fn instance(&self) -> InstanceRef;
-}
+// /// An object created from an instance.
+// #[enum_dispatch]
+// pub trait InstanceChild {
+//     /// Returns the instance used to create the object.
+//     fn instance(&self) -> InstanceRef;
+// }
 
-/// Opaque reference to an instance.
-pub enum InstanceRef<'a> {
-    Marker(PhantomData<&'a Instance>),
-}
+// /// Opaque reference to an instance.
+// #[enum_dispatch(InstanceApi)]
+// pub enum InstanceRef<'a> {
+//     Vk(&'a VkInstance),
+// }
 
 /// Opaque owned object to an instance.
 #[enum_dispatch(InstanceApi)]

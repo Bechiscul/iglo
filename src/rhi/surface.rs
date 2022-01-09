@@ -1,6 +1,6 @@
 use enum_dispatch::enum_dispatch;
 
-use super::{vk::VkSurface, InstanceChild, InstanceRef};
+use super::vk::VkSurface;
 
 // TODO(Bech): TextureFormat.
 
@@ -16,7 +16,7 @@ pub enum SurfaceError {
     Unknown,
 }
 
-#[enum_dispatch(SurfaceApi, InstanceChild)]
+#[enum_dispatch(SurfaceApi)]
 pub enum Surface<'a> {
     Vk(VkSurface<'a>),
 }

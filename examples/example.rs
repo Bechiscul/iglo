@@ -1,8 +1,11 @@
+use std::{borrow::Borrow, ops::Deref, rc::Rc, sync::Arc};
+
 use iglo::{os::Window, rhi::*};
 
 struct Renderer<'a> {
     window: &'a Window,
     instance: Instance,
+    surface: Surface<'a>,
 }
 
 impl<'a> Renderer<'a> {
@@ -13,14 +16,21 @@ impl<'a> Renderer<'a> {
             validation: true,
         };
 
-        let instance = Instance::new(&instance_info).ok()?;
-        Some(Self { window, instance })
+        let instance = Instance::new(&instance_info).unwrap();
+        let surface = instance.new_surface(window).unwrap();
+
+        Some(Self {
+            window,
+            instance,
+            surface,
+        })
     }
 }
 
 fn main() {
     let window = Window::new();
     window.show();
+
     let _renderer = Renderer::new(&window).expect("Failed to create renderer!");
 
     loop {

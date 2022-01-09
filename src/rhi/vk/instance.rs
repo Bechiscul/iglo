@@ -1,13 +1,16 @@
-use std::ffi::{CStr, CString};
-
-use ash::{
-    extensions::*,
-    vk::{self, ApplicationInfo},
+use std::{
+    ffi::{CStr, CString},
+    sync::Arc,
 };
 
-use crate::rhi::{
-    Adapter, Backend, InstanceApi, InstanceError, InstanceInfo, Surface, SurfaceError,
+use ash::{extensions::*, vk};
+
+use crate::{
+    os::Window,
+    rhi::{Adapter, Backend, InstanceApi, InstanceError, InstanceInfo, Surface, SurfaceError},
 };
+
+use super::VkSurface;
 
 pub trait VkInstanceApi {
     /// Returns the entry that holds the global vulkan functions.
@@ -38,11 +41,31 @@ pub trait VkInstanceApi {
     unsafe fn debug_utils_extension(&self) -> Option<&ext::DebugUtils>;
 }
 
+pub struct VkInstanceInner {
+    pub entry: ash::Entry,
+    pub handle: ash::Instance,
+    pub physical_devices: Vec<vk::PhysicalDevice>,
+    pub debug_utils: Option<(vk::DebugUtilsMessengerEXT, ext::DebugUtils)>,
+}
+
+impl Drop for VkInstanceInner {
+    fn drop(&mut self) {
+        if let Some(debug_utils) = &self.debug_utils {
+            let ext = &debug_utils.1;
+            unsafe {
+                ext.destroy_debug_utils_messenger(debug_utils.0, None);
+            }
+        }
+
+        // SAFETY: Since we don't allow cloning or copying self, we know that we are the only owner of the instance,
+        // unless someone used the internal API in the wrong way.
+        // Therefore we are allowed to destroy the handles.
+        unsafe { self.handle.destroy_instance(None) };
+    }
+}
+
 pub struct VkInstance {
-    entry: ash::Entry,
-    handle: ash::Instance,
-    physical_devices: Vec<vk::PhysicalDevice>,
-    debug_utils: Option<(vk::DebugUtilsMessengerEXT, ext::DebugUtils)>,
+    inner: Arc<VkInstanceInner>,
 }
 
 impl VkInstance {
@@ -121,10 +144,12 @@ impl VkInstance {
         // SAFETY: We assume the vulkan implementation is implemented correctly.
         match unsafe { entry.create_instance(&create_info, None) } {
             Ok(instance) => Ok(Self {
-                entry,
-                handle: instance,
-                physical_devices: vec![],
-                debug_utils: None,
+                inner: Arc::new(VkInstanceInner {
+                    entry,
+                    handle: instance,
+                    physical_devices: vec![],
+                    debug_utils: None,
+                }),
             }),
             _ => Err(InstanceError::Unknown),
         }
@@ -167,22 +192,22 @@ impl VkInstance {
 
 impl VkInstanceApi for VkInstance {
     fn entry(&self) -> &ash::Entry {
-        &self.entry
+        &self.inner.entry
     }
 
     unsafe fn handle(&self) -> &ash::Instance {
-        &self.handle
+        &self.inner.handle
     }
 
     unsafe fn debug_utils_messenger(&self) -> Option<&vk::DebugUtilsMessengerEXT> {
-        match &self.debug_utils {
+        match &self.inner.debug_utils {
             Some(debug_utils) => Some(&debug_utils.0),
             _ => None,
         }
     }
 
     unsafe fn debug_utils_extension(&self) -> Option<&ext::DebugUtils> {
-        match &self.debug_utils {
+        match &self.inner.debug_utils {
             Some(debug_utils) => Some(&debug_utils.1),
             _ => None,
         }
@@ -194,8 +219,11 @@ impl InstanceApi for VkInstance {
         Backend::Vulkan
     }
 
-    fn new_surface(&self) -> Result<Surface, SurfaceError> {
-        todo!()
+    fn new_surface<'a>(&self, window: &'a Window) -> Result<Surface<'a>, SurfaceError> {
+        Ok(Surface::Vk(VkSurface::new(
+            Arc::clone(&self.inner),
+            window,
+        )?))
     }
 
     fn enumerate_adapters<T: ExactSizeIterator<Item = Adapter>>(&self) -> T {
