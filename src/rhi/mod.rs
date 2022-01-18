@@ -1,13 +1,5 @@
 // TODO(Bech): Only enable if vulkan.
-// pub mod vk;
-
-// pub use adapter::*;
-// pub use instance::*;
-// pub use surface::*;
-
-// mod adapter;
-// mod instance;
-// mod surface;
+pub mod vk;
 
 use crate::Version;
 
@@ -17,8 +9,21 @@ pub enum Backend {
     Vulkan,
 }
 
+pub trait IntoError: Sized {
+    fn into_error(self) -> Error;
+}
+
 pub enum Error {
-    /// A layer wnas not present.
+    /// Failed to allocate host memory.
+    OutOfHostMemory,
+
+    /// Failed to allocate device memory.
+    OutOfDeviceMemory,
+
+    /// Device lost.
+    DeviceLost,
+
+    /// A layer was not present.
     LayerNotPresent,
 
     /// An extension was not present.
@@ -26,12 +31,6 @@ pub enum Error {
 
     /// A feature was not present.
     FeatureNotPresent,
-
-    /// Failed to allocate host memory.
-    OutOfHostMemory,
-
-    /// Failed to allocate device memory.
-    OutOfDeviceMemory,
 
     BackendMismatch,
 
@@ -41,6 +40,12 @@ pub enum Error {
     /// The call failed due to invalid arguments or implementation specific reasons.
     Unknown,
 }
+
+pub trait IntoResult<T>: Sized {
+    fn into_result(self) -> Result<T>;
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct ApplicationInfo<'a> {
     pub name: &'a str,
@@ -67,7 +72,20 @@ impl<'a> Default for InstanceInfo<'a> {
     }
 }
 
-pub trait InstanceApi: Sized {
+pub trait InstanceApi: Send + Sync + Sized {
+    /// Returns an iterator over all the adapters that support the minimum requirements.
+    ///
+    /// The iterators length is always > 0, because a successfull instantation requires at least
+    /// 1 supported adapter. If none was found creation fails with [`Error::NotSupported`].
+    fn enumerate_adapters<T: Iterator<Item = impl AdapterApi>>(&self) -> T;
+
+    /// Creates a new surface.
+    fn new_surface(&self) -> Result<Surface>;
+}
+
+pub enum Instance {}
+
+impl Instance {
     /// Creates a new instance with the preferred backend.
     ///
     /// If the preferred backend fails to be instantiated,
@@ -77,35 +95,28 @@ pub trait InstanceApi: Sized {
     /// - **Linux**: Vulkan, OpenGL
     /// - **Mac**: Metal
     ///
-    /// To only check a single backend use [`InstanceApi::with_backend()`]
+    /// To only check a single backend use [`Instance::with_backend()`]
     ///
     /// **Note**: The above assumes all backends are enabled.
     ///
     /// # Arguments
     ///
     /// `info` - Info about the instance that is passed to the implementation.
-    fn new(info: &InstanceInfo) -> Result<Self, Error> {
-        Self::with_backend(Backend::Vulkan, info)
+    pub fn new(info: &InstanceInfo) -> Result<Self> {
+        todo!()
     }
 
     /// Creates a new instance with the supplied backend.
     ///
-    /// Unlike [`InstanceApi::new()`] this function only tries to instantiate with the passed in backend.
+    /// Unlike [`Instance::new()`] this function only tries to instantiate with the passed in backend.
     ///
     /// # Arguments
     ///
     /// - `backend` - The backend to use for instantiation.
     /// - `info` - Info about the instance that is passed to the implementation.
-    fn with_backend(backend: Backend, info: &InstanceInfo) -> Result<Self, Error>;
-
-    /// Returns an iterator over all the adapters that support the minimum requirements.
-    ///
-    /// The iterators length is always > 0, because a successfull instantation requires at least
-    /// 1 supported adapter. If none was found creation fails with [`Error::NotSupported`].
-    fn enumerate_adapters<T: Iterator<Item = impl AdapterApi>>(&self) -> T;
-
-    /// Creates a new surface.
-    fn new_surface(&self) -> Result<Surface, Error>;
+    pub fn with_backend(backend: Backend, info: &InstanceInfo) -> Result<Self> {
+        todo!()
+    }
 }
 
 pub trait AdapterApi: Sized {}
